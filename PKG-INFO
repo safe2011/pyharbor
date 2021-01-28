@@ -1,0 +1,11 @@
+Metadata-Version: 1.0
+Name: pyharbor
+Version: 1.2.9
+Summary: The harbor python SDK
+Home-page: https://github.com/safe2011/pyharbor
+Author: safe2011
+Author-email: safe2011@outlook.com
+License: MIT Licence
+Description: The harbor python SDK
+Keywords: pyharbor,harbor,python
+Platform: any
