@@ -210,7 +210,7 @@ class HarborClient(object):
                 #     repo = repo[len(project_name)+1:]
                 tags = self.get_project_repository_artifacts(project_name,repo)
                 for tag in tags:
-                    ret.append("{}/{}/{}/{}".format(self.host,project_name,repo,tag))
+                    ret.append("{}/{}/{}:{}".format(self.host,project_name,repo,tag))
 
         except Exception as err:
             raise err
