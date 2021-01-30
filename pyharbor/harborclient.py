@@ -27,34 +27,7 @@ def _safe_loads(text):
     except Exception:
         return text
 
-
-def make_client_result(response, raw=False):
-    return _safe_loads(response.text)
-    # ret = {"success": False, "httpcode": 0, "payload": {}, "error": {}}
-
-    # ret["httpcode"] = response.status_code
-
-    # if response.status_code in range(200, 299):
-    #     ret["success"] = True
-    #     if raw is True:
-    #         ret["payload"] = response.text
-    #     else:
-    #         ret["payload"] = _safe_loads(response.text)
-
-    # else:
-    #     ret["success"] = False
-
-    #     if raw is True:
-    #         ret["error"] = response.text
-    #     else:
-    #         ret["error"] = _safe_loads(response.text)
-
-    #     if not ret.get("error", None) and response.status_code in [401]:
-    #         ret["error"] = "Unauthorized - please check your username/password"
-
-    # return ret
-
-class HarborClient(object):
+class HarborBase(object):
     def __init__(self, host, user, password, protocol="http",ssl_verify=False):
         self.host = host
         self.user = user
@@ -62,13 +35,11 @@ class HarborClient(object):
         self.protocol = protocol
         self.ssl_verify=ssl_verify
         self.page_size = 100
-        ver = self._get_api_version()
-        if len(ver)>0:
-            self.base_url = "{}://{}/api/{}".format(self.protocol,self.host,ver)
+        self.api_version = self._get_api_version()
+        if len(self.api_version)>0:
+            self.base_url = "{}://{}/api/{}".format(self.protocol,self.host,self.api_version)
         else:
             self.base_url = "{}://{}/api".format(self.protocol,self.host)
-
-
     def _get_api_version(self):
         url  = "{}://{}/api/version".format(self.protocol,self.host)
         try:
@@ -85,10 +56,9 @@ class HarborClient(object):
             _logger.error(str(err))
             #raise err
         return ""
-        
-
-
-
+ 
+class HarborBaseClient(HarborBase):
+    
     # GET /projects
     def get_projects(self):
         ret  = []
@@ -97,13 +67,7 @@ class HarborClient(object):
             page = 1
             while True :
                 url = '{}/projects?page={}&page_size={}'.format(self.base_url,page,self.page_size)
-                _logger.debug("GET url=%s", str(url))
-                r = requests.get(
-                    url=url,
-                    auth=(self.user,self.password),
-                    verify=self.ssl_verify,
-                    headers=header_overrides,
-                    )   
+                _logger.debug("GET url=%s", str(url))              
                 r = requests.get(
                         url=url,
                         auth=(self.user,self.password),
@@ -126,6 +90,101 @@ class HarborClient(object):
             raise err
         return ret 
 
+class HarborV1Client(HarborBaseClient):
+    def get_project_by_name(self,name):
+        ret = {}
+        try:
+            url = "{}/projects?name={}".format(self.base_url,name)
+            _logger.debug("GET url=%s", str(url))
+            _logger.debug("GET insecure=%s", str(self.ssl_verify))
+            r = requests.get(url=url,
+                verify=self.ssl_verify,
+                headers=header_overrides,
+                )            
+            if r.status_code == 200:
+                response = json.loads(r.text)
+                if response is not None and  len(response)>0:
+                    ret = response[0]
+            else:
+                raise Exception(r.text)
+        except Exception as err:
+            raise err
+        return ret
+    def get_project_repository(self,project_name):
+        ret = []
+        try:
+            project = self.get_project_by_name(project_name)
+            if project is not None:
+                project_id = project.get("project_id",None)
+                if project_id is not None:
+                    page = 1
+                    while True:
+                        url = "{}/repositories?project_id={}&page={}&page_size={}".format(self.base_url,project_id,page,self.page_size)
+                        _logger.debug("GET url=%s", str(url))              
+                        r = requests.get(
+                                url=url,
+                                auth=(self.user,self.password),
+                                verify=self.ssl_verify,
+                                headers=header_overrides,
+                                )  
+
+                        if r.status_code in range(200, 299):    
+                            response = json.loads(r.text)
+                            for row in response:
+                                repo = row.get("name","")
+                                if repo.startswith(project_name+"/"):
+                                    repo = repo[len(project_name)+1:]
+                                ret.append(repo)
+                            
+                            if len(response) <  self.page_size:
+                                break
+
+                            page += 1
+                        else:
+                            raise Exception(r.text)
+        except Exception as err:
+            raise err
+        return ret
+    
+    def get_project_tags(self,project_name):
+        ret = []
+        try:
+            repo_list = self.get_project_repository(project_name)
+            for repo in repo_list:
+                page = 1
+                while True:
+                    url = "{}/repositories/{}/{}/tags?page={}&page_size={}".format(
+                        self.base_url,
+                        project_name,
+                        repo,
+                        page,
+                        self.page_size
+                        )
+                    _logger.debug("GET url=%s", str(url))              
+                    r = requests.get(
+                            url=url,
+                            auth=(self.user,self.password),
+                            verify=self.ssl_verify,
+                            headers=header_overrides,
+                            )  
+
+                    if r.status_code in range(200, 299):    
+                        response = json.loads(r.text)
+                        for row in response:
+                            tag = row.get("name","")
+                            ret.append("{}/{}/{}:{}".format(self.host,project_name,repo,tag))
+                          
+                        if len(response) <  self.page_size:
+                            break
+
+                        page += 1
+                    else:
+                        raise Exception(r.text)
+        except Exception as err:
+            raise err
+        return ret
+
+class HarborV2Client(HarborBaseClient):
     def get_project_repository(self,project_name):
         ret  = []
         
@@ -171,7 +230,13 @@ class HarborClient(object):
         try:
             page = 1
             while True: 
-                url = "{}/projects/{}/repositories/{}/artifacts?page={}&page_size={}".format(self.base_url,project_name,repository_name,page,self.page_size)
+                url = "{}/projects/{}/repositories/{}/artifacts?page={}&page_size={}".format(
+                    self.base_url,
+                    project_name,
+                    repository_name,
+                    page,
+                    self.page_size
+                    )
                 _logger.debug("GET url=%s", str(url))
                 r = requests.get(
                     url=url,
@@ -215,4 +280,23 @@ class HarborClient(object):
         except Exception as err:
             raise err
         return ret 
+class HarborClient(HarborBase):
+    def __init__(self, host, user, password, protocol="http",ssl_verify=False):
+        super().__init__(host=host,user=user,password=password,protocol=protocol,ssl_verify=ssl_verify)
+        if len(self.api_version)>0:
+            self.hc = HarborV2Client(host=host,user=user,password=password,protocol=protocol,ssl_verify=ssl_verify)
+        else:
+            self.hc = HarborV1Client(host=host,user=user,password=password,protocol=protocol,ssl_verify=ssl_verify)
+
+
+    # GET /projects
+    def get_projects(self):
+        return self.hc.get_projects()
+
+    def get_project_repository(self,project_name):
+        return self.hc.get_project_repository(project_name)
+    
+    def get_project_tags(self,project_name):
+        return self.hc.get_project_tags(project_name)
+     
        
